@@ -117,6 +117,9 @@
       "memory_usage": {
         "name": "Memory usage"
       },
+      "disk_capacity": {
+        "name": "{disk_name} capacity"
+      },
       "memory_used": {
         "name": "Memory used"
       }

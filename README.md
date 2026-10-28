@@ -25,8 +25,13 @@ locally, with no cloud account.
 
 ## Supported models
 
-Developed and tested on an **F4-425** running **TOS 6**. The integration talks to the
-TOS web API rather than anything model-specific, so other TOS 6 units should work and
+Developed and tested:
+
+  - **F4-425** running **TOS 6**
+  - **F4-423** running **TOS 7**
+  
+The integration talks to the
+TOS web API rather than anything model-specific, so other TOS 6,7 units should work and
 the number of drive entities follows the number of bays. Reports welcome.
 
 TOS 5 and earlier are not supported.
@@ -67,15 +72,15 @@ default interval is 60 seconds.
 
 | Entity | Notes |
 |---|---|
-| `sensor` HDD*n* temperature | One per bay, with model, serial and capacity as attributes |
-| `sensor` HDD*n* power-on hours | Diagnostic |
+| `sensor` HDD*n* NVME*n* temperature | One per bay, with model, serial and capacity as attributes |
+| `sensor` HDD*n*  NVME*n* power-on hours | Diagnostic |
 | `sensor` CPU / System temperature | |
 | `sensor` CPU usage | Percentage, with per-core load as attributes |
 | `sensor` Memory usage / Memory used | Percentage and bytes; total as an attribute |
 | `sensor` Hottest disk | Highest drive temperature — the one to automate on |
 | `sensor` Fan speed | RPM |
 | `sensor` Volume / Pool total, used, free, usage | Per volume and per pool |
-| `binary_sensor` HDD*n* problem | On when TOS reports a fault |
+| `binary_sensor` HDD*n*  NVME*n* problem | On when TOS reports a fault |
 | `select` Fan mode | Automatic, Low, Medium, Full |
 
 ### Fan control

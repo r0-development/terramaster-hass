@@ -129,6 +129,21 @@ class Disk:
     def healthy(self) -> bool | None:
         return None if self.status is None else self.status == 0
 
+    @property
+    def capacity_bytes(self) -> int | None:
+        """Convert the string capacity (e.g., '12.0 TB') to bytes."""
+        if not self.capacity:
+            return None
+        
+        match = _SIZE_STRING_RE.search(self.capacity)
+        if not match:
+            return None
+            
+        value = float(match.group(1))
+        unit = match.group(2).upper()
+        
+        return int(value * _UNIT_MULTIPLIER.get(unit, 1))
+
 
 @dataclass(slots=True)
 class Volume:
@@ -188,44 +203,87 @@ def _unwrap(payload: Any) -> Any:
 
 
 def build_disks(status: Any, listing: Any, overview: Any) -> list[Disk]:
-    """Merge the three disk endpoints, keyed by slot.
+    """Merge the disk endpoints, separating HDD and NVMe and fixing slot conflicts."""
+    
+    disks: list[Disk] = []
 
-    GetDiskStatus is authoritative for temperature and is the only endpoint that
-    reports every bay -- IhmInfoList covers IronWolf drives only.
-    """
-    disks: dict[int, Disk] = {}
-
+    # 1. Собираем базовую информацию из status
     for entry in _unwrap(status) or []:
-        if not isinstance(entry, dict):
+        if not isinstance(entry, dict) or entry.get("device") is None:
             continue
-        slot = entry.get("slot")
-        if slot is None:
-            continue
-        disks[slot] = Disk(
+            
+        device = str(entry.get("device"))
+        name = entry.get("name") or "Unknown Disk"
+        original_slot = entry.get("slot") or 0
+        
+        # ИСПРАВЛЕНИЕ КОНФЛИКТА: Если это NVMe, меняем ему слот на 90+.
+        # Это предотвратит дублирование сущностей в Home Assistant.
+        if "NVMe" in name or len(device) > 8:  # /dev/sdza имеет 9 символов
+            if "1" in name or device == "/dev/sdza":
+                slot = 90
+            elif "2" in name or device == "/dev/sdzb":
+                slot = 91
+            else:
+                slot = 99
+        else:
+            slot = original_slot
+            
+        disks.append(Disk(
             slot=slot,
-            name=entry.get("name") or f"HDD{slot}",
+            name=name,
             serial=entry.get("serial"),
-            device=entry.get("device"),
+            device=device,
             temperature=parse_temperature(entry.get("temperature")),
             power_on_hours=entry.get("power_on_hours"),
             status=entry.get("status"),
-        )
+        ))
 
-    # GetDiskListData has no slot field; match on device path.
-    by_device = {d.device: d for d in disks.values() if d.device}
+    # 2. Добавляем модель из listing
     for entry in _unwrap(listing) or []:
         if not isinstance(entry, dict):
             continue
-        if disk := by_device.get(entry.get("device")):
-            disk.model = entry.get("model")
+        device = entry.get("device")
+        for disk in disks:
+            if disk.device == device:
+                disk.model = entry.get("model")
+                break
 
-    for entry in (_unwrap(overview) or {}).get("slot_data", []) or []:
-        if not isinstance(entry, dict):
-            continue
-        if disk := disks.get(entry.get("slot")):
-            disk.capacity = entry.get("factory_capacity") or None
+    # 3. Разделяем на HDD и NVMe
+    hdds = [d for d in disks if len(d.device) == 8]
+    nvmes = [d for d in disks if len(d.device) > 8]
 
-    return [disks[slot] for slot in sorted(disks)]
+    # 4. Собираем объемы из overview (только реальные, не 256 ГБ)
+    overview_slots = (_unwrap(overview) or {}).get("slot_data", []) or []
+    available_capacities = []
+    
+    for ov in overview_slots:
+        if isinstance(ov, dict) and ov.get("factory_capacity"):
+            cap = ov.get("factory_capacity")
+            if cap != "256 GB":
+                available_capacities.append(cap)
+
+    # 5. Раздаем объемы HDD строго по порядку устройств (/dev/sda, /dev/sdb, /dev/sdc)
+    hdds.sort(key=lambda d: d.device)
+    
+    if len(available_capacities) == len(hdds):
+        for i, hdd in enumerate(hdds):
+            hdd.capacity = available_capacities[i]
+    else:
+        slot_caps = {ov.get("slot"): ov.get("factory_capacity") for ov in overview_slots if isinstance(ov, dict)}
+        for hdd in hdds:
+            cap = slot_caps.get(hdd.slot)
+            if cap and cap != "256 GB":
+                hdd.capacity = cap
+            else:
+                hdd.capacity = None
+
+    # 6. Для NVMe ставим 256 ГБ
+    for nvme in nvmes:
+        nvme.capacity = "256 GB"
+
+    # Сортируем итоговый список по имени
+    disks.sort(key=lambda d: d.name)
+    return disks
 
 
 def build_volumes(payload: Any) -> list[Volume]:
@@ -268,10 +326,7 @@ def build_pools(payload: Any) -> list[Pool]:
 
 
 def build_cpu(payload: Any) -> tuple[float | None, dict[str, float]]:
-    """Aggregate CPU percentage plus per-core values.
-
-    ``cpu`` is the overall figure; ``cpu0``..``cpuN`` are the individual cores.
-    """
+    """Aggregate CPU percentage plus per-core values."""
     data = _unwrap(payload) or {}
     if not isinstance(data, dict):
         return None, {}

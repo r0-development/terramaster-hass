@@ -135,6 +135,7 @@ async def async_setup_entry(
     for disk in data.disks:
         entities.append(TerraMasterDiskTemperature(coordinator, disk))
         entities.append(TerraMasterDiskPowerOnHours(coordinator, disk))
+        entities.append(TerraMasterDiskCapacity(coordinator, disk))
 
     entities.extend(
         TerraMasterVolumeSensor(coordinator, volume, key)
@@ -169,11 +170,7 @@ class TerraMasterSensor(TerraMasterEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, object] | None:
-        """Per-core load on the CPU sensor, total memory on the memory sensor.
-
-        Core count varies by NAS model, so these are attributes rather than a
-        variable number of entities.
-        """
+        """Per-core load on the CPU sensor, total memory on the memory sensor."""
         data = self.coordinator.data
         if self.entity_description.key == "cpu_usage":
             return {"processor": data.processor, **data.cpu_per_core} or None
@@ -195,7 +192,8 @@ class TerraMasterDiskTemperature(TerraMasterDiskEntity, SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        return disk.temperature if (disk := self._disk) else None
+        disk = self._disk
+        return disk.temperature if disk else None
 
     @property
     def extra_state_attributes(self) -> dict[str, str | int | None] | None:
@@ -223,7 +221,27 @@ class TerraMasterDiskPowerOnHours(TerraMasterDiskEntity, SensorEntity):
 
     @property
     def native_value(self) -> int | None:
-        return disk.power_on_hours if (disk := self._disk) else None
+        disk = self._disk
+        return disk.power_on_hours if disk else None
+
+
+class TerraMasterDiskCapacity(TerraMasterDiskEntity, SensorEntity):
+    """Capacity of one physical drive."""
+
+    _attr_translation_key = "disk_capacity"
+    _attr_device_class = SensorDeviceClass.DATA_SIZE
+    _attr_native_unit_of_measurement = UnitOfInformation.BYTES
+    _attr_suggested_unit_of_measurement = UnitOfInformation.GIBIBYTES
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: TerraMasterCoordinator, disk) -> None:
+        super().__init__(coordinator, disk, "capacity")
+
+    @property
+    def native_value(self) -> int | None:
+        disk = self._disk
+        return disk.capacity_bytes if disk else None
 
 
 class TerraMasterVolumeSensor(TerraMasterEntity, SensorEntity):
